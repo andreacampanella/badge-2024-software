@@ -11,6 +11,7 @@ set(IDF_COMPONENTS
     tildagon
     esp_https_ota
     wpa_supplicant
+    composite
 )
 
 if(NOT GIT_FOUND)

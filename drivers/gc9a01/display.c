@@ -2,6 +2,7 @@
 #include "st3m_gfx.h"
 #include "flow3r_bsp.h"
 #include "mp_uctx.h"
+#include "composite.h"
 #include <math.h>
 
 bool gfx_inited = false;
@@ -63,7 +64,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(get_ctx_obj, get_ctx);
 
 void tildagon_blit_fb (void)
 {
-  flow3r_bsp_display_send_fb(tildagon_fb, 16);
+  flow3r_bsp_display_send_fb(tildagon_fb, 16); composite_submit_fb(tildagon_fb);
 }
 
 void tildagon_end_frame(Ctx *ctx)

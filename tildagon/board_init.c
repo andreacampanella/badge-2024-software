@@ -16,6 +16,8 @@ void tildagon_i2c_init(void);
 
 void tildagon_pins_init(void);
 
+void composite_init(void);
+
 void tildagon_startup(void) 
 {
     // call the micropy default startup - does VFS init on ESP32
@@ -30,5 +32,7 @@ void tildagon_startup(void)
     tildagon_usb_init();
 
     tildagon_imu_init();
+
+    composite_init();
 
 }
