@@ -44,6 +44,10 @@
 #define ACTIVE_LINES      288      // lines 23..310
 #define VBLANK_BOT_LINES    2      // lines 311..312
 
+// Internal-SRAM-friendly count of unique active line buffers.
+// 64 * 864 = ~55KB, fits in internal SRAM.
+#define NUM_ACTIVE_BUFS    8
+
 // Pin mux table
 static const struct {
     int8_t pin;
@@ -63,7 +67,7 @@ static gdma_channel_handle_t dma_chan;
 static dma_descriptor_t *desc_chain = NULL;   // FRAME_LINES descriptors
 static uint8_t *line_blank = NULL;
 static uint8_t *line_vsync = NULL;
-static uint8_t *line_active = NULL;           // currently same as blank
+static uint8_t *active_bufs[NUM_ACTIVE_BUFS];  // 64 unique active line buffers
 
 // Normal blanking line: sync pulse, then blank for the rest
 static void build_blank_line(uint8_t *buf) {
@@ -106,13 +110,16 @@ static void lcd_task(void *arg) {
     // Allocate the three line templates in DMA-capable internal SRAM
     line_blank  = heap_caps_malloc(LINE_LEN, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     line_vsync  = heap_caps_malloc(LINE_LEN, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    line_active = heap_caps_malloc(LINE_LEN, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    if (!line_blank || !line_vsync || !line_active) {
+    if (!line_blank || !line_vsync) {
         while (1) vTaskDelay(60000 / portTICK_PERIOD_MS);
     }
     build_blank_line(line_blank);
     build_vsync_line(line_vsync);
-    build_active_line(line_active);
+    for (int i = 0; i < NUM_ACTIVE_BUFS; i++) {
+        active_bufs[i] = heap_caps_malloc(LINE_LEN, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        if (!active_bufs[i]) { while (1) vTaskDelay(60000 / portTICK_PERIOD_MS); }
+        build_active_line(active_bufs[i]);   // start with the bars pattern
+    }
 
     // Allocate descriptor chain (one per scanline)
     desc_chain = heap_caps_malloc(sizeof(dma_descriptor_t) * FRAME_LINES,
@@ -129,7 +136,9 @@ static void lcd_task(void *arg) {
         } else if (i < VSYNC_LINES + VBLANK_TOP_LINES) {
             buf = line_blank;
         } else if (i < VSYNC_LINES + VBLANK_TOP_LINES + ACTIVE_LINES) {
-            buf = line_active;
+            int active_idx = i - (VSYNC_LINES + VBLANK_TOP_LINES);   // 0..287
+            int buf_idx = (active_idx * NUM_ACTIVE_BUFS) / ACTIVE_LINES; // 0..63
+            buf = active_bufs[buf_idx];
         } else {
             buf = line_blank;
         }
@@ -210,24 +219,42 @@ static inline uint8_t rgb565_to_luma4(uint8_t hi, uint8_t lo) {
     return (uint8_t)(LUMA_BLACK + level);
 }
 
-static void poke_task(void *arg) {
+// Source framebuffer geometry (matches drivers/gc9a01/display.c)
+#define FB_WIDTH   240
+#define FB_HEIGHT  240
+#define FB_BPP       2
+
+static void render_task(void *arg) {
     vTaskDelay(10000 / portTICK_PERIOD_MS);   // wait for lcd_task to finish init
+
+    // Horizontal layout in active region: letterbox 240 columns in the middle.
+    // ACTIVE_LEN = 690; padding each side = (690-240)/2 = 225.
+    const int h_pad = (ACTIVE_LEN - FB_WIDTH) / 2;
+    const int active_off = SYNC_LEN + BACK_PORCH_LEN;
+
     while (1) {
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-        if (!line_active) continue;
+        vTaskDelay(33 / portTICK_PERIOD_MS);   // ~30 Hz max; cheap if no fb yet
         const uint8_t *fb = (const uint8_t *)composite_last_fb;
         if (!fb) continue;
-        const uint8_t *px = &fb[(120 * 240 + 120) * 2];
-        uint8_t luma = rgb565_to_luma4(px[0], px[1]);
-        for (int i = 0; i < 50; i++) {
-            line_active[SYNC_LEN + BACK_PORCH_LEN + i] = luma;
+
+        for (int row = 0; row < NUM_ACTIVE_BUFS; row++) {
+            // Which source row maps to this output row?
+            int y_src = (row * FB_HEIGHT) / NUM_ACTIVE_BUFS;
+            const uint8_t *src = &fb[y_src * FB_WIDTH * FB_BPP];
+            uint8_t *dst = active_bufs[row] + active_off;
+            // Left padding stays at LUMA_BLANK from build_active_line; just
+            // overwrite the centre 240 columns.
+            // (The bars to either side will remain visible until first frame.)
+            for (int x = 0; x < h_pad; x++)        dst[x] = LUMA_BLANK;
+            for (int x = 0; x < FB_WIDTH; x++)    dst[h_pad + x] = rgb565_to_luma4(src[x*2], src[x*2+1]);
+            for (int x = h_pad + FB_WIDTH; x < ACTIVE_LEN; x++) dst[x] = LUMA_BLANK;
         }
     }
 }
 
 void composite_init(void) {
     xTaskCreatePinnedToCore(lcd_task, "lcd_task", 8192, NULL, 5, NULL, 1);
-    xTaskCreatePinnedToCore(poke_task, "poke", 4096, NULL, 4, NULL, 1);
+    xTaskCreatePinnedToCore(render_task, "render", 4096, NULL, 4, NULL, 1);
 }
 
 void composite_submit_fb(const uint8_t *fb) {
