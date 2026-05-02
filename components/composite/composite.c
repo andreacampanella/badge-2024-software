@@ -46,7 +46,7 @@
 
 // Internal-SRAM-friendly count of unique active line buffers.
 // 64 * 864 = ~55KB, fits in internal SRAM.
-#define NUM_ACTIVE_BUFS    8
+#define NUM_ACTIVE_BUFS    48
 
 // Pin mux table
 static const struct {
