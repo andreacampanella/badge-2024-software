@@ -196,8 +196,41 @@ static void lcd_task(void *arg) {
     while (1) vTaskDelay(60000 / portTICK_PERIOD_MS);
 }
 
-void composite_init(void) {
-    xTaskCreatePinnedToCore(lcd_task, "lcd_task", 8192, NULL, 5, NULL, 1);
+volatile uint32_t composite_submit_count = 0;
+volatile const uint8_t *composite_last_fb = NULL;
+
+// RGB565 byteswapped (high byte first in memory) -> 4-bit luma
+static inline uint8_t rgb565_to_luma4(uint8_t hi, uint8_t lo) {
+    uint16_t p = ((uint16_t)hi << 8) | lo;
+    uint8_t r = (p >> 11) & 0x1F;
+    uint8_t g = (p >>  5) & 0x3F;
+    uint8_t b =  p        & 0x1F;
+    uint32_t y = 77u * (r << 1) + 150u * g + 29u * (b << 1);
+    uint32_t level = (y * 12u) / 16321u;
+    return (uint8_t)(LUMA_BLACK + level);
 }
 
-void composite_submit_fb(const uint8_t *fb) { (void)fb; }
+static void poke_task(void *arg) {
+    vTaskDelay(10000 / portTICK_PERIOD_MS);   // wait for lcd_task to finish init
+    while (1) {
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        if (!line_active) continue;
+        const uint8_t *fb = (const uint8_t *)composite_last_fb;
+        if (!fb) continue;
+        const uint8_t *px = &fb[(120 * 240 + 120) * 2];
+        uint8_t luma = rgb565_to_luma4(px[0], px[1]);
+        for (int i = 0; i < 50; i++) {
+            line_active[SYNC_LEN + BACK_PORCH_LEN + i] = luma;
+        }
+    }
+}
+
+void composite_init(void) {
+    xTaskCreatePinnedToCore(lcd_task, "lcd_task", 8192, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(poke_task, "poke", 4096, NULL, 4, NULL, 1);
+}
+
+void composite_submit_fb(const uint8_t *fb) {
+    composite_submit_count++;
+    composite_last_fb = fb;
+}
