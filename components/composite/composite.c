@@ -122,7 +122,7 @@ static void lcd_task(void *arg) {
     LCD_CAM.lcd_clock.lcd_clk_sel = 3;       // PLL_F160M_CLK
     LCD_CAM.lcd_clock.lcd_clkm_div_a = 0;
     LCD_CAM.lcd_clock.lcd_clkm_div_b = 0;
-    LCD_CAM.lcd_clock.lcd_clkm_div_num = 160;  // 160 MHz / 160 = 1 MHz
+    LCD_CAM.lcd_clock.lcd_clkm_div_num = 6;       // 160/6 = 26.67MHz -> 13.33MHz PCLK (~PAL 13.5MHz)  // 160 MHz / 160 = 1 MHz
     LCD_CAM.lcd_clock.lcd_clk_equ_sysclk = 0;
     LCD_CAM.lcd_clock.lcd_clkcnt_n = 1;       // PCLK = LCDclk / (clkcnt_n+1) ; minimum=1 -> /2
     LCD_CAM.lcd_clock.lcd_ck_idle_edge = 1;
