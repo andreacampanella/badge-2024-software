@@ -170,7 +170,7 @@ static void lcd_task(void *arg) {
     // Route GPIOs to LCD peripheral
     for (int i = 0; i < 8; i++) {
         esp_rom_gpio_connect_out_signal(mux[i].pin, mux[i].signal, false, false);
-        gpio_hal_iomux_func_sel(GPIO_PIN_MUX_REG[mux[i].pin], PIN_FUNC_GPIO);
+        gpio_ll_func_sel(&GPIO, mux[i].pin, PIN_FUNC_GPIO);
         gpio_set_drive_capability((gpio_num_t)mux[i].pin, (gpio_drive_cap_t)3);
     }
 
