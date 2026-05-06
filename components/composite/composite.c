@@ -23,6 +23,16 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include <string.h>
+#include <stdio.h>
+extern void mp_hal_stdout_tx_strn(const char *str, size_t len);
+#define CV_LOG(...) do { \
+    char _b[160]; \
+    int _n = snprintf(_b, sizeof(_b), "[CV] " __VA_ARGS__); \
+    if (_n > 0) { mp_hal_stdout_tx_strn(_b, _n); mp_hal_stdout_tx_strn("\r\n", 2); } \
+} while(0)
+
+#include <stdio.h>
+
 
 // 4-bit DAC: HS_I (GPIO38) = MSB weight 8 / HS_H = 4 / HS_G = 2 / HS_F = 1
 #define LUMA_SYNC      0       // 0V - sync tip (only used during sync interval)
@@ -64,6 +74,7 @@ static const struct {
 };
 
 static gdma_channel_handle_t dma_chan;
+volatile uint32_t composite_submit_count = 0;
 static dma_descriptor_t *desc_chain = NULL;   // FRAME_LINES descriptors
 static uint8_t *line_blank = NULL;
 static uint8_t *line_vsync = NULL;
@@ -106,6 +117,7 @@ static void build_active_line(uint8_t *buf) {
 
 static void lcd_task(void *arg) {
     vTaskDelay(8000 / portTICK_PERIOD_MS);
+    CV_LOG("step 1: awake");
 
     // Allocate the three line templates in DMA-capable internal SRAM
     line_blank  = heap_caps_malloc(LINE_LEN, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
@@ -115,18 +127,19 @@ static void lcd_task(void *arg) {
     }
     build_blank_line(line_blank);
     build_vsync_line(line_vsync);
+    CV_LOG("step 2: templates filled");
     for (int i = 0; i < NUM_ACTIVE_BUFS; i++) {
         active_bufs[i] = heap_caps_malloc(LINE_LEN, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-        if (!active_bufs[i]) { while (1) vTaskDelay(60000 / portTICK_PERIOD_MS); }
-        build_active_line(active_bufs[i]);   // start with the bars pattern
+        if (!active_bufs[i]) { CV_LOG("FAIL active[%d]", i); while (1) vTaskDelay(60000 / portTICK_PERIOD_MS); }
+        build_active_line(active_bufs[i]);
     }
+    CV_LOG("step 3: %d active buffers allocated", NUM_ACTIVE_BUFS);
 
     // Allocate descriptor chain (one per scanline)
     desc_chain = heap_caps_malloc(sizeof(dma_descriptor_t) * FRAME_LINES,
                                   MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    if (!desc_chain) {
-        while (1) vTaskDelay(60000 / portTICK_PERIOD_MS);
-    }
+    if (!desc_chain) { CV_LOG("FAIL desc_chain"); while (1) vTaskDelay(60000 / portTICK_PERIOD_MS); }
+    CV_LOG("step 4: desc_chain allocated");
 
     // Wire up the chain: each descriptor points to next, last loops to first
     for (int i = 0; i < FRAME_LINES; i++) {
@@ -201,11 +214,14 @@ static void lcd_task(void *arg) {
     gdma_start(dma_chan, (intptr_t)&desc_chain[0]);
     LCD_CAM.lcd_user.lcd_update = 1;
     LCD_CAM.lcd_user.lcd_start  = 1;
+    CV_LOG("step 5: LCD running");
 
-    while (1) vTaskDelay(60000 / portTICK_PERIOD_MS);
+    while (1) {
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        CV_LOG("alive: submit_count=%lu", composite_submit_count);
+    }
 }
 
-volatile uint32_t composite_submit_count = 0;
 volatile const uint8_t *composite_last_fb = NULL;
 
 // RGB565 byteswapped (high byte first in memory) -> 4-bit luma
