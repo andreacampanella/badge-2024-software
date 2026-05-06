@@ -1,7 +1,7 @@
 # Tildagon firmware build helpers
 # Usage: make [build|clean|flash|monitor|all]
 
-DOCKER_IMG := ghcr.io/emfcamp/esp_idf:v5.2.1
+DOCKER_IMG := ghcr.io/emfcamp/esp_idf:v5.5.1
 PORT       := /dev/ttyACM0
 PWD_DIR    := $(shell pwd)
 BUILD_DIR  := micropython/ports/esp32/build-tildagon
@@ -17,7 +17,7 @@ DOCKER_RUN_TTY := sudo docker run -it --rm \
                   -v "$(PWD_DIR)":/firmware \
                   $(DOCKER_IMG)
 
-.PHONY: build clean flash deploy monitor all help
+.PHONY: build firstTime clean flash deploy monitor all help
 
 help:
 	@echo "Targets:"
@@ -30,7 +30,11 @@ help:
 	@echo "Bootloader: hold BOOP, plug USB, release after a few seconds."
 	@echo "Port: $(PORT)  (override with: make flash PORT=/dev/ttyACMx)"
 
-build:
+
+firstTime:
+	./scripts/firstTime.sh
+
+build: firstTime
 	$(DOCKER_RUN)
 
 clean:
